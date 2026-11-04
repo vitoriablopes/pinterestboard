@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pin2PDF – Board do Pinterest em PDF</title>
+<style>
+  :root{--bg:#faf7f5;--card:#fff;--ink:#2b2523;--muted:#7a6f6a;--accent:#c8453b;--line:#e8e0db}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{padding:28px 20px 8px;max-width:1100px;margin:auto}
+  h1{margin:0 0 4px;font-size:1.6rem}
+  header p{margin:0;color:var(--muted)}
+  main{max-width:1100px;margin:auto;padding:16px 20px 130px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  h2{font-size:1rem;margin:0 0 12px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input[type=text],input[type=number],select{padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:.95rem;background:#fff}
+  input[type=text]{flex:1;min-width:240px}
+  input[type=number]{width:90px}
+  button{padding:10px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:.95rem;cursor:pointer}
+  button.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:default}
+  label.f{display:flex;flex-direction:column;gap:4px;font-size:.8rem;color:var(--muted)}
+  .opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+  .hint{font-size:.82rem;color:var(--muted);margin-top:8px}
+  .st{font-size:.9rem}
+  .st.err{color:var(--accent)}
+  #status{margin-top:10px;min-height:1.2em}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px}
+  .item{position:relative;border-radius:10px;overflow:hidden;border:3px solid transparent;background:#eee;cursor:pointer;aspect-ratio:3/4}
+  .item img{width:100%;height:100%;object-fit:cover;display:block}
+  .item.sel{border-color:var(--accent)}
+  .item.bad::after{content:"não carregou";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.8rem;color:var(--muted);background:#eee}
+  .item .ck{position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:50%;background:#fff;border:2px solid #bbb;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;z-index:2}
+  .item.sel .ck{background:var(--accent);border-color:var(--accent)}
+  .item .rm{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:22px;height:22px;text-align:center;line-height:22px;font-size:13px;display:none;z-index:2}
+  .item.local .rm{display:block}
+  .bar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:12px 20px;display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap}
+  .count{font-size:.9rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>📌 Pin2PDF</h1>
+  <p>Cole o link de um board do Pinterest, escolha as imagens e gere um PDF para imprimir.</p>
+</header>
+<main>
+  <section>
+    <h2>1. Carregar imagens</h2>
+    <div class="row">
+      <input type="text" id="url" placeholder="https://br.pinterest.com/usuario/nome-do-board/">
+      <button id="load">Carregar board</button>
+    </div>
+    <div class="hint">O board precisa ser <b>público</b>. O Pinterest costuma liberar só as ~25 pins mais recentes por esse método. Se o link não funcionar, adicione imagens manualmente abaixo.</div>
+    <div class="row" style="margin-top:12px">
+      <input type="file" id="files" accept="image/*" multiple>
+      <input type="text" id="imgurl" placeholder="ou cole o link de uma imagem ou de um pin" style="max-width:420px">
+      <button class="sec" id="addurl">Adicionar</button>
+    </div>
+    <div id="status" class="st"></div>
+  </section>
+
+  <section>
+    <h2>2. Configurar PDF</h2>
+    <div class="opts">
+      <label class="f">Papel
+        <select id="paper"><option value="a4">A4</option><option value="a5">A5</option><option value="a3">A3</option><option value="letter">Carta</option></select></label>
+      <label class="f">Orientação
+        <select id="orient"><option value="p">Retrato</option><option value="l">Paisagem</option></select></label>
+      <label class="f">Largura da imagem (cm)
+        <input type="number" id="w" value="6" min="1" max="40" step="0.5"></label>
+      <label class="f">Margem (cm)
+        <input type="number" id="margin" value="1" min="0" max="5" step="0.5"></label>
+      <label class="f">Espaço entre imagens (cm)
+        <input type="number" id="gap" value="0.5" min="0" max="5" step="0.25"></label>
+      <label class="f">Borda
+        <select id="border"><option value="0">Sem borda</option><option value="1">Fina</option></select></label>
+    </div>
+    <div class="hint" id="info"></div>
+  </section>
+
+  <section>
+    <h2>3. Escolher imagens</h2>
+    <div class="row">
+      <button class="sec" id="all">Selecionar todas</button>
+      <button class="sec" id="none">Limpar seleção</button>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+</main>
+
+<div class="bar">
+  <span class="st" id="status2"></span>
+  <span class="count" id="count2"></span>
+  <button id="pdf" disabled>Gerar PDF</button>
+</div>
+
+<script>
+const PROXIES = [
+  u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u)
+];
+const $ = id => document.getElementById(id);
+let imgs = []; // {src, sel, local, bad, tried}
+
+function status(msg, err){
+  ['status','status2'].forEach(id=>{ const s=$(id); s.textContent=msg; s.className='st'+(err?' err':''); });
+}
+
+/* ---------- rede ---------- */
+async function fetchText(url){
+  let last;
+  for (const p of PROXIES){
+    try{
+      const r = await fetch(p(url));
+      if(!r.ok) throw new Error(r.status);
+      const t = await r.text();
+      if(t && t.length>50) return t;
+    }catch(e){ last=e; }
+  }
+  throw last || new Error('falha');
+}
+
+// Baixa uma imagem remota como blob: tenta direto e depois pelos proxies.
+async function fetchImageBlob(url){
+  const tries = [u=>u, ...PROXIES];
+  for(const t of tries){
+    try{
+      const r = await fetch(t(url));
+      if(!r.ok) continue;
+      const b = await r.blob();
+      if(b.size>0 && (b.type.startsWith('image/') || b.type==='application/octet-stream' || b.type==='')) return b;
+    }catch(e){}
+  }
+  throw new Error('fetch');
+}
+function blobToDataURL(b){
+  return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(b); });
+}
+function decodeImage(src){
+  return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error('decode')); im.src=src; });
+}
+
+/* ---------- board ---------- */
+function normalizeBoard(u){
+  u = u.trim().split('?')[0].split('#')[0].replace(/\/+$/,'');
+  if(!/^https?:\/\//.test(u)) u = 'https://' + u;
+  u = u.replace(/^(https?:\/\/)[a-z]{2}\.pinterest\./i,'$1www.pinterest.').replace(/^(https?:\/\/)pinterest\./i,'$1www.pinterest.');
+  return u + '.rss';
+}
+function addImage(src, sel, local){
+  if(imgs.some(i=>i.src===src)) return false;
+  imgs.push({src, sel, local}); return true;
+}
+
+async function loadBoard(){
+  const raw = $('url').value.trim();
+  if(!raw) return status('Cole o link do board.', true);
+  if(/pin\.it\//.test(raw)) return status('Links curtos (pin.it) não funcionam aqui. Abra o board e copie o endereço completo.', true);
+  $('load').disabled = true; status('Carregando board…');
+  try{
+    const xml = await fetchText(normalizeBoard(raw));
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const found = [];
+    [...doc.querySelectorAll('item')].forEach(it=>{
+      const d = it.querySelector('description')?.textContent || '';
+      const m = d.match(/src="([^"]+)"/);
+      if(m) found.push(m[1].replace(/\/(\d+)x\//,'/736x/'));
+    });
+    if(!found.length) throw new Error('vazio');
+    let added = 0;
+    found.forEach(src=>{ if(addImage(src,false,false)) added++; });
+    status(added + ' imagens carregadas.');
+    render();
+  }catch(e){
+    status('Não consegui ler esse board (precisa ser público, e os serviços de proxy podem estar fora do ar). Tente de novo ou adicione as imagens manualmente.', true);
+  }
+  $('load').disabled = false;
+}
+$('load').onclick = loadBoard;
+$('url').addEventListener('keydown', e=>{ if(e.key==='Enter') loadBoard(); });
+
+/* ---------- adicionar manualmente ---------- */
+$('files').onchange = async e=>{
+  const files = [...e.target.files];
+  e.target.value = '';
+  for(const f of files){
+    try{ addImage(await blobToDataURL(f), true, true); }
+    catch(err){ status('Não consegui ler o arquivo ' + f.name, true); }
+  }
+  render();
+};
+
+async function resolvePin(u){
+  const html = await fetchText(u);
+  const m = html.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
+         || html.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+  if(!m) throw new Error('og');
+  return m[1].replace(/&amp;/g,'&').replace(/\/(\d+)x\//,'/736x/');
+}
+$('addurl').onclick = async ()=>{
+  let u = $('imgurl').value.trim();
+  if(!/^https?:\/\//.test(u)) return status('Cole um endereço válido (começando com https://).', true);
+  $('addurl').disabled = true;
+  try{
+    if(/pinterest\.[a-z.]+\/pin\/|pin\.it\//i.test(u)){
+      status('Buscando a imagem do pin…');
+      u = await resolvePin(u);
+    }
+    addImage(u, true, true);
+    $('imgurl').value=''; status('Imagem adicionada.'); render();
+  }catch(e){
+    status('Não consegui obter a imagem desse link. Tente clicar com o botão direito na imagem → "Copiar endereço da imagem", ou baixe a imagem e envie pelo botão de arquivos.', true);
+  }
+  $('addurl').disabled = false;
+};
+
+/* ---------- grade ---------- */
+function render(){
+  const g = $('grid'); g.innerHTML='';
+  imgs.forEach((im,i)=>{
+    const d = document.createElement('div');
+    d.className = 'item' + (im.sel?' sel':'') + (im.local?' local':'') + (im.bad?' bad':'');
+    const img = document.createElement('img');
+    img.referrerPolicy = 'no-referrer';
+    img.loading = 'lazy';
+    img.onerror = async ()=>{
+      if(im.src.startsWith('data:') || im.tried){ im.bad = true; d.classList.add('bad'); return; }
+      im.tried = true;
+      try{ im.src = await blobToDataURL(await fetchImageBlob(im.src)); render(); }
+      catch(e){ im.bad = true; d.classList.add('bad'); }
+    };
+    img.src = im.src;
+    const ck = document.createElement('div'); ck.className='ck'; ck.textContent = im.sel?'✓':'';
+    const rm = document.createElement('div'); rm.className='rm'; rm.title='Remover'; rm.textContent='×';
+    d.append(img, ck, rm);
+    d.onclick = ev=>{
+      if(ev.target===rm){ imgs.splice(i,1); } else { im.sel = !im.sel; }
+      render();
+    };
+    g.appendChild(d);
+  });
+  update();
+}
+$('all').onclick = ()=>{ imgs.forEach(i=>i.sel=true); render(); };
+$('none').onclick = ()=>{ imgs.forEach(i=>i.sel=false); render(); };
+
+function update(){
+  const n = imgs.filter(i=>i.sel).length;
+  const t = n + ' de ' + imgs.length + ' selecionadas';
+  $('count').textContent = t; $('count2').textContent = t;
+  $('pdf').disabled = n===0;
+  const dims = {a4:[21,29.7],a5:[14.8,21],a3:[29.7,42],letter:[21.59,27.94]}[$('paper').value];
+  const pw = $('orient').value==='p'?dims[0]:dims[1];
+  const w = +$('w').value, m = +$('margin').value, gp = +$('gap').value;
+  const cols = Math.max(0, Math.floor((pw - 2*m + gp) / (w + gp)));
+  $('info').textContent = cols>0 ? 'Cabem cerca de ' + cols + ' imagem(ns) por linha nessa configuração.' : 'A largura da imagem é maior que a área útil — ela será reduzida para caber.';
+}
+['paper','orient','w','margin','gap'].forEach(id=> $(id).addEventListener('input', update));
+
+/* ---------- gerador de PDF (sem bibliotecas) ---------- */
+function dataURLToBytes(du){
+  const bin = atob(du.split(',')[1]);
+  const u = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i);
+  return u;
+}
+
+// pages: [{items:[{jpeg, pw, ph, x, y, w, h}]}] — medidas em cm, y a partir do topo
+function buildPDF(pages, PWcm, PHcm, border){
+  const K = 72/2.54, enc = new TextEncoder();
+  const chunks = [], offsets = []; let len = 0;
+  const push = d => { const u = typeof d==='string' ? enc.encode(d) : d; chunks.push(u); len += u.length; };
+  const f = n => n.toFixed(3);
+  const W = PWcm*K, H = PHcm*K;
+
+  let id = 3;
+  pages.forEach(p=> p.items.forEach(it=>{ it.id = id++; }));
+  pages.forEach(p=>{ p.cid = id++; p.pid = id++; });
+  const total = id;
+
+  push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  const obj = (n, body)=>{ offsets[n] = len; push(n+' 0 obj\n'); body(); push('\nendobj\n'); };
+
+  obj(1, ()=> push('<< /Type /Catalog /Pages 2 0 R >>'));
+  obj(2, ()=> push('<< /Type /Pages /Kids [' + pages.map(p=>p.pid+' 0 R').join(' ') + '] /Count ' + pages.length + ' >>'));
+  pages.forEach(p=> p.items.forEach(it=>{
+    obj(it.id, ()=>{
+      push('<< /Type /XObject /Subtype /Image /Width '+it.pw+' /Height '+it.ph+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+it.jpeg.length+' >>\nstream\n');
+      push(it.jpeg); push('\nendstream');
+    });
+  }));
+  pages.forEach(p=>{
+    let c = '';
+    p.items.forEach(it=>{
+      const x = it.x*K, w = it.w*K, h = it.h*K, y = H - it.y*K - h;
+      c += 'q '+f(w)+' 0 0 '+f(h)+' '+f(x)+' '+f(y)+' cm /Im'+it.id+' Do Q\n';
+      if(border) c += 'q 0.6 G 0.6 w '+f(x)+' '+f(y)+' '+f(w)+' '+f(h)+' re S Q\n';
+    });
+    obj(p.cid, ()=> push('<< /Length '+enc.encode(c).length+' >>\nstream\n'+c+'endstream'));
+    obj(p.pid, ()=>{
+      const xo = p.items.map(it=>'/Im'+it.id+' '+it.id+' 0 R').join(' ');
+      push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+f(W)+' '+f(H)+'] /Resources << /XObject << '+xo+' >> >> /Contents '+p.cid+' 0 R >>');
+    });
+  });
+
+  const xref = len;
+  let x = 'xref\n0 '+total+'\n0000000000 65535 f \n';
+  for(let n=1;n<total;n++) x += String(offsets[n]).padStart(10,'0')+' 00000 n \n';
+  x += 'trailer\n<< /Size '+total+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF';
+  push(x);
+  return new Blob(chunks, {type:'application/pdf'});
+}
+
+// Carrega a imagem e devolve JPEG já redimensionado (máx. 2000px) + dimensões
+async function prepareImage(src){
+  let dataUrl = src;
+  if(!src.startsWith('data:')) dataUrl = await blobToDataURL(await fetchImageBlob(src));
+  const im = await decodeImage(dataUrl);
+  const s = Math.min(1, 2000 / Math.max(im.naturalWidth, im.naturalHeight));
+  const cw = Math.max(1, Math.round(im.naturalWidth*s)), ch = Math.max(1, Math.round(im.naturalHeight*s));
+  const c = document.createElement('canvas'); c.width=cw; c.height=ch;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cw,ch);
+  ctx.drawImage(im,0,0,cw,ch);
+  return { jpeg: dataURLToBytes(c.toDataURL('image/jpeg', 0.92)), pw: cw, ph: ch };
+}
+
+$('pdf').onclick = async ()=>{
+  const sel = imgs.filter(i=>i.sel);
+  if(!sel.length) return;
+  $('pdf').disabled = true;
+  try{
+    const dims = {a4:[21,29.7],a5:[14.8,21],a3:[29.7,42],letter:[21.59,27.94]}[$('paper').value];
+    const land = $('orient').value==='l';
+    const PW = land?dims[1]:dims[0], PH = land?dims[0]:dims[1];
+    const m = +$('margin').value, gp = +$('gap').value;
+    const usableW = PW - 2*m, usableH = PH - 2*m;
+    if(usableW<=0 || usableH<=0){ status('A margem é grande demais para esse papel.', true); $('pdf').disabled=false; return; }
+    const wantW = Math.min(+$('w').value, usableW);
+
+    let page = {items:[]}; const pages = [page];
+    let x = m, y = m, rowH = 0, failed = 0, ok = 0;
+
+    for(let i=0;i<sel.length;i++){
+      status('Processando imagem ' + (i+1) + ' de ' + sel.length + '…');
+      let p;
+      try{ p = await prepareImage(sel[i].src); }catch(e){ failed++; continue; }
+      let w = wantW, h = w * p.ph / p.pw;
+      if(h > usableH){ h = usableH; w = h * p.pw / p.ph; }
+      if(x > m && x + w > PW - m + 0.001){ x = m; y += rowH + gp; rowH = 0; }
+      if(y + h > PH - m + 0.001 && page.items.length){ page = {items:[]}; pages.push(page); x = m; y = m; rowH = 0; }
+      page.items.push({jpeg:p.jpeg, pw:p.pw, ph:p.ph, x, y, w, h});
+      ok++;
+      x += w + gp; rowH = Math.max(rowH, h);
+    }
+
+    if(!ok){
+      status('Nenhuma imagem pôde ser carregada, então não gerei o PDF. Se vieram de link, baixe as imagens e envie pelo botão de arquivos.', true);
+    }else{
+      const blob = buildPDF(pages, PW, PH, $('border').value==='1');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'board.pdf';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
+      status(failed ? 'PDF gerado com ' + ok + ' imagem(ns); ' + failed + ' não puderam ser carregadas.' : 'PDF gerado com ' + ok + ' imagem(ns) em ' + pages.length + ' página(s)! 🎉', !!failed);
+    }
+  }catch(e){
+    status('Erro ao gerar o PDF: ' + e.message, true);
+  }
+  $('pdf').disabled = false;
+};
+
+update();
+</script>
+</body>
+</html>

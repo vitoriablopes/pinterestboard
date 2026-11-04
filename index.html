@@ -36,7 +36,7 @@
   .item.sel .ck{background:var(--accent);border-color:var(--accent)}
   .item .rm{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:22px;height:22px;text-align:center;line-height:22px;font-size:13px;display:none;z-index:2}
   .item.local .rm{display:block}
-  .bar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:12px 20px;display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap}
+  .bar{z-index:10;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:12px 20px;display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap}
   .count{font-size:.9rem;color:var(--muted)}
 </style>
 </head>
@@ -58,6 +58,14 @@
       <input type="text" id="imgurl" placeholder="ou cole o link de uma imagem ou de um pin" style="max-width:420px">
       <button class="sec" id="addurl">Adicionar</button>
     </div>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:.85rem;color:var(--muted)">Proxy próprio (recomendado se boards e links de pin não funcionarem)</summary>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="proxy" placeholder="https://pin2pdf.seunome.workers.dev">
+        <button class="sec" id="saveproxy">Salvar</button>
+      </div>
+      <div class="hint">Os proxies públicos usados por padrão são instáveis e costumam ser bloqueados pelo Pinterest. Com um proxy seu (Cloudflare Worker gratuito, arquivo <code>worker.js</code>), board e links de pin passam a funcionar de forma confiável.</div>
+    </details>
     <div id="status" class="st"></div>
   </section>
 
@@ -98,11 +106,17 @@
 </div>
 
 <script>
-const PROXIES = [
+const PUBLIC_PROXIES = [
   u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
   u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
   u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u)
 ];
+function getProxies(){
+  let own = '';
+  try{ own = (localStorage.getItem('proxy')||'').trim(); }catch(e){}
+  if(!own) return PUBLIC_PROXIES;
+  return [u => own + (own.includes('?')?'&':'?') + 'url=' + encodeURIComponent(u), ...PUBLIC_PROXIES];
+}
 const $ = id => document.getElementById(id);
 let imgs = []; // {src, sel, local, bad, tried}
 
@@ -111,14 +125,15 @@ function status(msg, err){
 }
 
 /* ---------- rede ---------- */
-async function fetchText(url){
+// Baixa um texto (direto e depois pelos proxies). `ok` valida o conteúdo; se não passar, tenta o próximo.
+async function fetchText(url, ok){
   let last;
-  for (const p of PROXIES){
+  for (const p of [u=>u, ...getProxies()]){
     try{
       const r = await fetch(p(url));
       if(!r.ok) throw new Error(r.status);
       const t = await r.text();
-      if(t && t.length>50) return t;
+      if(t && t.length>50 && (!ok || ok(t))) return t;
     }catch(e){ last=e; }
   }
   throw last || new Error('falha');
@@ -126,7 +141,7 @@ async function fetchText(url){
 
 // Baixa uma imagem remota como blob: tenta direto e depois pelos proxies.
 async function fetchImageBlob(url){
-  const tries = [u=>u, ...PROXIES];
+  const tries = [u=>u, ...getProxies()];
   for(const t of tries){
     try{
       const r = await fetch(t(url));
@@ -151,9 +166,9 @@ function normalizeBoard(u){
   u = u.replace(/^(https?:\/\/)[a-z]{2}\.pinterest\./i,'$1www.pinterest.').replace(/^(https?:\/\/)pinterest\./i,'$1www.pinterest.');
   return u + '.rss';
 }
-function addImage(src, sel, local){
+function addImage(src, sel, local, hi){
   if(imgs.some(i=>i.src===src)) return false;
-  imgs.push({src, sel, local}); return true;
+  imgs.push({src, sel, local, hi}); return true;
 }
 
 async function loadBoard(){
@@ -194,26 +209,47 @@ $('files').onchange = async e=>{
   render();
 };
 
+// Acha o endereço da imagem principal de um pin a partir do HTML da página.
+function extractPinImage(html){
+  const clean = s => s.replace(/&amp;/g,'&').replace(/\\u002F/gi,'/').replace(/\\\//g,'/');
+  html = clean(html);
+  const meta = html.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
+            || html.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i)
+            || html.match(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i)
+            || html.match(/content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i);
+  let first = meta ? clean(meta[1]) : null;
+  const all = html.match(/https?:\/\/i\.pinimg\.com\/[^"'\s<>\\]+/g) || [];
+  if(!first) first = all.find(x=>/\/(originals|1200x|736x|564x|474x)\//.test(x)) || all[0];
+  if(!first) throw new Error('sem-imagem');
+  // tenta a versão original (melhor para imprimir); a de 736px serve de miniatura e de reserva
+  const m = first.match(/^(https?:\/\/i\.pinimg\.com\/)[^/]+\/(.+)$/i);
+  if(m) return { src: m[1]+'736x/'+m[2], hi: m[1]+'originals/'+m[2] };
+  return { src: first, hi: null };
+}
 async function resolvePin(u){
-  const html = await fetchText(u);
-  const m = html.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
-         || html.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-  if(!m) throw new Error('og');
-  return m[1].replace(/&amp;/g,'&').replace(/\/(\d+)x\//,'/736x/');
+  const html = await fetchText(u, t => /og:image|twitter:image|i\.pinimg\.com/i.test(t));
+  return extractPinImage(html);
 }
 $('addurl').onclick = async ()=>{
-  let u = $('imgurl').value.trim();
+  const u = $('imgurl').value.trim();
   if(!/^https?:\/\//.test(u)) return status('Cole um endereço válido (começando com https://).', true);
   $('addurl').disabled = true;
   try{
+    let r;
     if(/pinterest\.[a-z.]+\/pin\/|pin\.it\//i.test(u)){
       status('Buscando a imagem do pin…');
-      u = await resolvePin(u);
+      r = await resolvePin(u);
+    }else{
+      r = { src: u, hi: null };
     }
-    addImage(u, true, true);
-    $('imgurl').value=''; status('Imagem adicionada.'); render();
+    const added = addImage(r.src, true, true, r.hi);
+    $('imgurl').value='';
+    status(added ? 'Imagem adicionada: ' + r.src : 'Essa imagem já está na lista.');
+    render();
   }catch(e){
-    status('Não consegui obter a imagem desse link. Tente clicar com o botão direito na imagem → "Copiar endereço da imagem", ou baixe a imagem e envie pelo botão de arquivos.', true);
+    const pin = /pinterest|pin\.it/i.test(u);
+    status(pin ? 'Não consegui extrair a imagem desse pin (o Pinterest ou os serviços de proxy podem ter bloqueado). Tente de novo em instantes, ou cole o endereço da imagem direto (botão direito → "Copiar endereço da imagem").'
+               : 'Não consegui adicionar esse link.', true);
   }
   $('addurl').disabled = false;
 };
@@ -316,10 +352,16 @@ function buildPDF(pages, PWcm, PHcm, border){
 }
 
 // Carrega a imagem e devolve JPEG já redimensionado (máx. 2000px) + dimensões
-async function prepareImage(src){
-  let dataUrl = src;
-  if(!src.startsWith('data:')) dataUrl = await blobToDataURL(await fetchImageBlob(src));
-  const im = await decodeImage(dataUrl);
+async function prepareImage(src, hi){
+  let im;
+  if(hi){ // tenta a versão em alta resolução; se falhar, usa a normal
+    try{ im = await decodeImage(await blobToDataURL(await fetchImageBlob(hi))); }catch(e){ im = null; }
+  }
+  if(!im){
+    let dataUrl = src;
+    if(!src.startsWith('data:')) dataUrl = await blobToDataURL(await fetchImageBlob(src));
+    im = await decodeImage(dataUrl);
+  }
   const s = Math.min(1, 2000 / Math.max(im.naturalWidth, im.naturalHeight));
   const cw = Math.max(1, Math.round(im.naturalWidth*s)), ch = Math.max(1, Math.round(im.naturalHeight*s));
   const c = document.createElement('canvas'); c.width=cw; c.height=ch;
@@ -348,7 +390,7 @@ $('pdf').onclick = async ()=>{
     for(let i=0;i<sel.length;i++){
       status('Processando imagem ' + (i+1) + ' de ' + sel.length + '…');
       let p;
-      try{ p = await prepareImage(sel[i].src); }catch(e){ failed++; continue; }
+      try{ p = await prepareImage(sel[i].src, sel[i].hi); }catch(e){ failed++; continue; }
       let w = wantW, h = w * p.ph / p.pw;
       if(h > usableH){ h = usableH; w = h * p.pw / p.ph; }
       if(x > m && x + w > PW - m + 0.001){ x = m; y += rowH + gp; rowH = 0; }
@@ -372,6 +414,13 @@ $('pdf').onclick = async ()=>{
     status('Erro ao gerar o PDF: ' + e.message, true);
   }
   $('pdf').disabled = false;
+};
+
+try{ $('proxy').value = localStorage.getItem('proxy') || ''; }catch(e){}
+$('saveproxy').onclick = ()=>{
+  const v = $('proxy').value.trim().replace(/\/+$/,'');
+  try{ localStorage.setItem('proxy', v); status(v ? 'Proxy salvo.' : 'Proxy removido.'); }
+  catch(e){ status('Não consegui salvar o proxy neste navegador.', true); }
 };
 
 update();
